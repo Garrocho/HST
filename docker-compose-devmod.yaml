@@ -1,0 +1,80 @@
+version: '2.1'
+
+services:
+  iot-smart-contract-0:
+    container_name: iot-smart-contract-0
+    build:
+      context: .
+      dockerfile: ./smart_contract/Dockerfile
+      args:
+        - http_proxy
+        - https_proxy
+        - no_proxy
+    depends_on:
+      - validator-0
+    volumes:
+      - '.:/project/'
+    entrypoint: "bash -c \"./iot_smart_contract tcp://validator-0:4004\""
+
+  iot-dapp:
+    container_name: iot-dapp
+    build:
+      context: .
+      dockerfile: ./dapp/Dockerfile
+      args:
+        - http_proxy
+        - https_proxy
+        - no_proxy
+    environment:
+      - 'http_proxy=${http_proxy}'
+      - 'https_proxy=${https_proxy}'
+      - 'no_proxy=rest-api-0,validator-0,${no_proxy}'
+    volumes:
+      - '.:/project/'
+    ports:
+      - '0.0.0.0:3000:3000'
+    depends_on:
+      - rest-api-0
+    entrypoint: "bash -c \"sawtooth keygen --force sawtooth && tail -f /dev/null\""
+    stop_signal: SIGKILL
+
+  rest-api-0:
+    container_name: rest-api-0
+    image: hyperledger/sawtooth-rest-api:1.0
+    expose:
+      - 8008
+    ports:
+      - '8008:8008'
+    depends_on:
+      - validator-0
+    entrypoint: |
+      sawtooth-rest-api -vvv
+        --connect tcp://validator-0:4004
+        --bind rest-api-0:8008
+
+  settings-tp-0:
+    image: hyperledger/sawtooth-settings-tp:1.0
+    depends_on:
+      - validator-0
+    command: settings-tp -vv --connect tcp://validator-0:4004
+
+  validator-0:
+    container_name: validator-0
+    image: hyperledger/sawtooth-validator:1.0
+    expose:
+      - 4004
+    ports:
+      - '4004:4004'
+    command: |
+      bash -c "
+        if [ ! -f /etc/sawtooth/keys/validator.priv ]; then
+        sawadm keygen &&
+        sawtooth keygen my_key &&
+        sawset genesis -k /root/.sawtooth/keys/my_key.priv &&
+        sawadm genesis config-genesis.batch
+        fi;
+        sawtooth-validator -vvv \
+          --endpoint tcp://validator-0:8800 \
+          --bind component:tcp://eth0:4004 \
+          --bind network:tcp://eth0:8800
+      "
